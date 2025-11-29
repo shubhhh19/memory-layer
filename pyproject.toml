@@ -30,7 +30,8 @@ dependencies = [
   "greenlet>=3.0.3",
   "sentence-transformers>=3.0.1",
   "slowapi>=0.1.9",
-  "google-generativeai>=0.3.2"
+  "google-generativeai>=0.3.2",
+  "redis>=5.0.0"
 ]
 
 [project.optional-dependencies]
@@ -44,6 +45,7 @@ dev = [
 
 [project.scripts]
 aiml-api = "ai_memory_layer.main:run"
+aiml-worker = "ai_memory_layer.worker:run"
 
 [tool.ruff]
 line-length = 100

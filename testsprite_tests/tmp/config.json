@@ -1,0 +1,16 @@
+{
+  "status": "commited",
+  "type": "backend",
+  "scope": "codebase",
+  "localEndpoint": "http://localhost:8000/v1/admin/health",
+  "backendAuthType": "public",
+  "executionArgs": {
+    "projectName": "memory layer",
+    "projectPath": "/Users/its.shubhhh/Desktop/memory layer",
+    "testIds": [],
+    "additionalInstruction": "",
+    "envs": {
+      "API_KEY": "sk-user-vp-QxVPEzNSOxRxZhtJVoCI9k_HRRKtlLCV8eWACSIMKHQ9g23EhgdXnhm1e5jTNSh0dHFD8ZyiuCx-egYExvruX3JEP2g_DVvU765t1MD_HoJdK-hzWnpiJ0D09CxJKuZI"
+    }
+  }
+}

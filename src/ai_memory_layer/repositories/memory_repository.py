@@ -71,7 +71,7 @@ class MemoryRepository:
         *,
         tenant_id: str,
         conversation_id: str | None,
-        importance_min: float,
+        importance_min: float | None,
         limit: int,
     ) -> Sequence[Message]:
         stmt: Select[tuple[Message]] = select(Message).where(
@@ -84,6 +84,39 @@ class MemoryRepository:
         if importance_min is not None:
             stmt = stmt.where(Message.importance_score >= importance_min)
         stmt = stmt.order_by(Message.created_at.desc()).limit(limit)
+        result = await session.execute(stmt)
+        return result.scalars().all()
+
+    async def search_similar_messages(
+        self,
+        session: AsyncSession,
+        *,
+        tenant_id: str,
+        conversation_id: str | None,
+        importance_min: float | None,
+        limit: int,
+        query_embedding: list[float],
+    ) -> Sequence[Message] | None:
+        """Vector search using pgvector if available; returns None when unsupported."""
+        bind = session.get_bind()
+        if bind is None or bind.dialect.name != "postgresql":
+            return None
+        distance = Message.embedding.l2_distance(query_embedding).label("distance")
+        stmt: Select[tuple[Message]] = (
+            select(Message)
+            .where(
+                Message.tenant_id == tenant_id,
+                Message.archived.is_(False),
+                Message.embedding.is_not(None),
+                Message.embedding_status == "completed",
+            )
+            .order_by(distance.asc())
+            .limit(limit)
+        )
+        if conversation_id:
+            stmt = stmt.where(Message.conversation_id == conversation_id)
+        if importance_min is not None:
+            stmt = stmt.where(Message.importance_score >= importance_min)
         result = await session.execute(stmt)
         return result.scalars().all()
 
@@ -265,3 +298,8 @@ class MemoryRepository:
         stmt = select(func.count()).select_from(Message).where(Message.tenant_id == tenant_id)
         result = await session.execute(stmt)
         return result.scalar_one()
+
+    async def list_tenants(self, session: AsyncSession) -> Sequence[str]:
+        stmt = select(Message.tenant_id).distinct()
+        result = await session.execute(stmt)
+        return [row[0] for row in result.fetchall()]

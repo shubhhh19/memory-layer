@@ -9,7 +9,6 @@ from ai_memory_layer.database import get_read_session
 from ai_memory_layer.schemas.memory import MemorySearchParams, MemorySearchResponse
 from ai_memory_layer.security import require_api_key
 from ai_memory_layer.services.message_service import MessageService
-from ai_memory_layer.rate_limit import enforce_tenant_rate_limit
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
 service = MessageService()
@@ -33,5 +32,4 @@ async def search_memories(
         importance_min=importance_min,
         candidate_limit=candidate_limit,
     )
-    enforce_tenant_rate_limit(tenant_id)
     return await service.retrieve(session, params)

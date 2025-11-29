@@ -5,26 +5,30 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_memory_layer.database import get_read_session, get_session
 from ai_memory_layer.schemas.messages import MessageCreate, MessageResponse
 from ai_memory_layer.security import require_api_key
 from ai_memory_layer.services.message_service import MessageService
-from ai_memory_layer.rate_limit import enforce_tenant_rate_limit
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
 service = MessageService()
 
 
-@router.post("", response_model=MessageResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post("", response_model=MessageResponse)
 async def create_message(
     payload: MessageCreate,
+    response: Response,
     session: AsyncSession = Depends(get_session),
 ) -> MessageResponse:
-    enforce_tenant_rate_limit(payload.tenant_id)
-    return await service.ingest(session, payload)
+    result = await service.ingest(session, payload)
+    # Inline embeddings return 200; async queue returns 202 to signal eventual consistency
+    response.status_code = (
+        status.HTTP_202_ACCEPTED if service.settings.async_embeddings else status.HTTP_200_OK
+    )
+    return result
 
 
 @router.get("/{message_id}", response_model=MessageResponse)

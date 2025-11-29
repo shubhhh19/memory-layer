@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
+
+os.environ.setdefault("AIML_USE_PGVECTOR_STUB", "1")
+
+pytest_plugins = ("pytest_asyncio",)
 
 import pytest
 from fastapi import FastAPI
@@ -17,6 +22,7 @@ from ai_memory_layer import config as settings_module
 from ai_memory_layer.rate_limit import reset_rate_limiter_cache
 from ai_memory_layer.database import Base, get_session
 from ai_memory_layer.main import create_app
+from ai_memory_layer.services.message_service import MessageService
 
 
 @pytest.fixture(scope="session")
@@ -57,10 +63,20 @@ def client_builder(test_session: AsyncSession):
     async def _builder():
         app = create_app()
 
+        # Ensure services respect the current settings overrides for each test
+        from ai_memory_layer.routes import memory, messages
+
+        shared_service = MessageService()
+        messages.service = shared_service
+        memory.service = shared_service
+
         async def override_get_session():
             yield test_session
 
         app.dependency_overrides[get_session] = override_get_session
+        # Also override get_read_session for search endpoint
+        from ai_memory_layer.database import get_read_session
+        app.dependency_overrides[get_read_session] = override_get_session
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac

@@ -10,9 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai_memory_layer.database import get_session
 from ai_memory_layer.schemas.admin import HealthResponse, RetentionRunRequest, RetentionRunResponse
 from ai_memory_layer.security import require_api_key
-from ai_memory_layer.rate_limit import rate_limit_dependency
 from ai_memory_layer.services.health import HealthService
 from ai_memory_layer.services.retention import RetentionService
+from ai_memory_layer.services.health import HealthReport
 
 router = APIRouter()
 retention_service = RetentionService()
@@ -23,7 +23,6 @@ async def run_retention(
     payload: RetentionRunRequest,
     session: AsyncSession = Depends(get_session),
     _: str | None = Depends(require_api_key),
-    __: None = Depends(rate_limit_dependency()),
 ) -> RetentionRunResponse:
     if not payload.actions:
         raise HTTPException(
@@ -42,11 +41,7 @@ async def run_retention(
     )
 
 
-@router.get("/health", response_model=HealthResponse)
-async def health(request: Request) -> HealthResponse:
-    start_time = getattr(request.app.state, "start_time", datetime.now(timezone.utc))
-    service = HealthService(start_time=start_time)
-    report = await service.build_report()
+def _build_response(report: HealthReport) -> HealthResponse:
     return HealthResponse(
         status=report.status,
         database=report.database,  # type: ignore[arg-type]
@@ -58,3 +53,19 @@ async def health(request: Request) -> HealthResponse:
         embedding=report.embedding,
         notes=report.notes,
     )
+
+
+@router.get("/health", response_model=HealthResponse)
+async def health(request: Request) -> HealthResponse:
+    start_time = getattr(request.app.state, "start_time", datetime.now(timezone.utc))
+    service = HealthService(start_time=start_time)
+    report = await service.build_liveness()
+    return _build_response(report)
+
+
+@router.get("/readiness", response_model=HealthResponse)
+async def readiness(request: Request) -> HealthResponse:
+    start_time = getattr(request.app.state, "start_time", datetime.now(timezone.utc))
+    service = HealthService(start_time=start_time)
+    report = await service.build_readiness()
+    return _build_response(report)

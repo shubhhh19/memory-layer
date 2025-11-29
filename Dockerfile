@@ -8,17 +8,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends build-essential libpq-dev && \
+    apt-get install -y --no-install-recommends build-essential libpq-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml README.md ./
-COPY src ./src
+# Add non-root user
+RUN addgroup --system app && adduser --system --ingroup app app
+
+COPY pyproject.toml uv.lock README.md ./
 COPY alembic.ini ./
 COPY alembic ./alembic
+COPY src ./src
 
 RUN pip install --upgrade pip && \
-    pip install .
+    pip install --no-cache-dir uv && \
+    uv sync --frozen --no-dev
+
+USER app
 
 EXPOSE 8000
 
-CMD ["uvicorn", "ai_memory_layer.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD [".venv/bin/uvicorn", "ai_memory_layer.main:app", "--host", "0.0.0.0", "--port", "8000"]

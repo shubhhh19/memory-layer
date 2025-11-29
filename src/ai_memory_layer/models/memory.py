@@ -2,18 +2,36 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
 
-from ai_memory_layer.config import get_settings
 from ai_memory_layer.database import Base
 
+
+USE_PGVECTOR_STUB = os.environ.get("AIML_USE_PGVECTOR_STUB") == "1"
+
+if not USE_PGVECTOR_STUB:
+    from pgvector.sqlalchemy import Vector as VectorType  # type: ignore[assignment]
+else:
+
+    class VectorType(TypeDecorator):
+        """JSON-backed stub for environments where pgvector isn't available."""
+
+        impl = JSON
+        cache_ok = True
+
+        def process_bind_param(self, value, dialect):
+            return value
+
+        def process_result_value(self, value, dialect):
+            return value
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -29,9 +47,7 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text)
     message_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
     importance_score: Mapped[float | None] = mapped_column()
-    embedding: Mapped[list[float] | None] = mapped_column(
-        Vector(get_settings().embedding_dimensions), nullable=True
-    )
+    embedding: Mapped[list[float] | None] = mapped_column(VectorType(), nullable=True)
     embedding_status: Mapped[str] = mapped_column(
         Enum("pending", "completed", "failed", name="embedding_status"), default="pending"
     )

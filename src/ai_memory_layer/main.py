@@ -8,11 +8,6 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
-
-from ai_memory_layer.limiter import limiter
 
 from ai_memory_layer import __version__
 from ai_memory_layer.config import get_settings
@@ -26,6 +21,7 @@ from ai_memory_layer.middleware import (
     TimeoutMiddleware,
 )
 from ai_memory_layer.metrics import MetricsMiddleware, router as metrics_router
+from ai_memory_layer.rate_limit import RateLimitMiddleware
 from ai_memory_layer.routes import api_router
 from ai_memory_layer.scheduler import RetentionScheduler
 from ai_memory_layer.services.job_queue import EmbeddingJobQueue
@@ -151,24 +147,15 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
     
-    # Initialize Rate Limiter
-    # limiter = Limiter(key_func=get_remote_address, default_limits=[settings.global_rate_limit])
-    # We use the shared limiter instance from ai_memory_layer.limiter
-    # But we can configure defaults here if needed, or just rely on decorators
-    limiter.default_limits = [settings.global_rate_limit]
-    
     app = FastAPI(
         title=settings.app_name,
         version=__version__,
         lifespan=lifespan,
     )
-    
-    # Register Rate Limit Handler
-    app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-    app.add_middleware(SlowAPIMiddleware)
 
     register_exception_handlers(app)
+    
+    # Add middlewares in order (last added = first executed)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.allowed_origins,
@@ -179,6 +166,11 @@ def create_app() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestSizeLimitMiddleware, max_bytes=settings.request_max_bytes)
     app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(
+        RateLimitMiddleware,
+        rate_limit=settings.global_rate_limit,
+        tenant_rate_limit=settings.tenant_rate_limit,
+    )
     app.add_middleware(TimeoutMiddleware, timeout=settings.request_timeout_seconds)
     if settings.metrics_enabled:
         app.add_middleware(MetricsMiddleware)

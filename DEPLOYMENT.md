@@ -6,77 +6,36 @@ This guide covers deploying the AI Memory Layer to production, including remaini
 
 ## ✅ What's Already Done
 
-### Core Features (100%)
+### Core Features
 - ✅ Message storage with embeddings
-- ✅ Semantic search with vector similarity
+- ✅ Semantic search with pgvector (`ORDER BY embedding <-> :query`) plus in-process fallback
 - ✅ Importance scoring algorithm
-- ✅ Retention policies (archive/delete)
-- ✅ Google Gemini API integration
-- ✅ Rate limiting (global level)
+- ✅ Retention policies (archive/delete) with scheduler defaulting to daily (`*` tenants)
+- ✅ Google Gemini embedding integration
+- ✅ Rate limiting (global + per-tenant) backed by Redis
+- ✅ Redis-backed caching for embeddings/search with invalidation
+- ✅ Background embedding job queue with standalone worker
 - ✅ CORS configuration
 - ✅ API key authentication
-- ✅ Health checks & Prometheus metrics
-- ✅ Database migrations (Alembic)
-- ✅ Comprehensive test suite (13/15 tests passing)
+- ✅ Health checks & Prometheus metrics (request/search/embedding jobs)
+- ✅ Database migrations (Alembic + perf indexes)
+- ✅ Comprehensive test suite (all passing in repo)
 
-### Infrastructure (90%)
-- ✅ Docker & Docker Compose setup
+### Infrastructure
+- ✅ Docker & Docker Compose with Postgres+pgvector, Redis, API, worker
 - ✅ FastAPI application
 - ✅ SQLAlchemy async ORM
 - ✅ Structured logging (structlog)
-- ✅ Error handling
-- ✅ Request timeout middleware
+- ✅ Error handling and request timeouts
+- ✅ Non-root container image with pinned lockfile (uv.lock)
 
-## ⚠️ Remaining Tasks for Production
-
-### Critical (Must Fix)
-1. **Database Session Issue** (1 hour)
-   - **Problem**: Search endpoint has async context manager issue
-   - **Fix**: Update `get_read_session` dependency in `database.py`
-   - **Test**: Run `pytest tests/integration/test_api_messages.py`
-
-2. **Rate Limiting** (30 minutes)
-   - **Problem**: Per-request rate limiting not working
-   - **Current**: Global rate limit configured but not enforced per-request
-   - **Fix**: Either fix SlowAPI integration or use alternative (e.g., `limits` library directly)
-   - **Test**: Run `pytest tests/integration/test_rate_limit.py`
-
-### Important (Should Have)
-3. **Background Job Queue** (4-6 hours)
-   - **Why**: Embedding generation blocks request response
-   - **Solution**: Use Celery or Arq for async embedding jobs
-   - **Files**: `services/embedding.py`, `models/memory.py` (EmbeddingJob table exists)
-
-4. **Database Indexes** (30 minutes)
-   - **Why**: Improve query performance
-   - **Create Migration**:
-     ```bash
-     alembic revision -m "add_performance_indexes"
-     ```
-   - **Add Indexes**:
-     - `messages.created_at`
-     - `messages.archived`
-     - `messages.tenant_id, archived` (composite)
-
-5. **Monitoring & Alerting** (2-3 hours)
-   - **Current**: Prometheus metrics exposed at `/metrics`
-   - **Need**: Grafana dashboards, alert rules
-   - **Metrics to Monitor**:
-     - Request latency (p50, p95, p99)
-     - Error rates
-     - Embedding generation time
-     - Database connection pool usage
-
-### Nice to Have
-6. **Load Testing** (2 hours)
-   - Test with 100+ concurrent requests
-   - Verify rate limiting works under load
-   - Check database connection pool sizing
-
-7. **Caching Layer** (3-4 hours)
-   - Redis for frequent search queries
-   - Cache embedding results
-   - Invalidate on new messages
+## 🧭 Production Defaults & Safety Nets
+1. **Redis required in production**: set `MEMORY_REDIS_URL` (shared cache + rate limiter).
+2. **Async embeddings**: run `aiml-worker` alongside the API when `MEMORY_ASYNC_EMBEDDINGS=true`.
+3. **Retention**: defaults to daily (`MEMORY_RETENTION_SCHEDULE_SECONDS=86400`) and runs for all tenants found when `MEMORY_RETENTION_TENANTS=*`.
+4. **Readiness vs liveness**: `/v1/admin/health` is lightweight DB ping; `/v1/admin/readiness` optionally exercises the embedding provider.
+5. **Search**: Postgres/pgvector is the default path; SQLite remains for local/dev tests only.
+6. **Embedding dimensions**: the `messages.embedding` column now accepts any dimension—keep `MEMORY_EMBEDDING_DIMENSIONS` aligned with your provider (e.g. 768 for Gemini).
 
 ## 🧪 Testing for Production
 
@@ -93,10 +52,7 @@ pytest tests/unit/ -v
 # Run integration tests
 pytest tests/integration/ -v
 
-# Current Status: 11/13 passing
-# Failing:
-# - test_create_and_search_message (session issue)
-# - test_rate_limit_triggers (rate limit not enforcing)
+# Current Status: All passing (sqlite + mock embeddings)
 ```
 
 ### 3. End-to-End Tests
@@ -104,7 +60,7 @@ pytest tests/integration/ -v
 # Run E2E tests
 pytest tests/e2e/ -v
 
-# Expected: All passing after session fix
+# Expected: All passing
 ```
 
 ### 4. Manual API Testing
@@ -128,8 +84,9 @@ curl -X POST http://localhost:8000/v1/messages \
     "role": "user",
     "content": "I love Python programming"
   }'
+# Inline embeddings return 200; async embeddings return 202.
 
-# 3. Search (wait 2-3 seconds for embedding)
+# 3. Search
 curl "http://localhost:8000/v1/memory/search?tenant_id=test&query=Python&top_k=5"
 
 # 4. Check metrics
@@ -365,20 +322,14 @@ MEMORY_METRICS_ENABLED=true
 
 ## 🎯 Production Readiness Score
 
-**Current: 85%**
+**Current: Ready (code + artifacts)**
 
 - ✅ Core Features: 100%
-- ✅ Infrastructure: 90%
-- ⚠️ Testing: 87% (13/15 tests passing)
-- ⚠️ Performance: 70% (needs background jobs)
-- ⚠️ Monitoring: 60% (metrics exist, dashboards needed)
-
-**To reach 100%:**
-1. Fix 2 failing tests (database session + rate limiting)
-2. Implement background job queue
-3. Add database indexes
-4. Set up monitoring dashboards
-5. Complete load testing
+- ✅ Infrastructure: Docker/Compose with Postgres+pgvector, Redis, API, worker
+- ✅ Testing: All repo tests passing (sqlite/mock). Run against Postgres/pgvector in CI before go-live.
+- ✅ Performance: Background embeddings + Redis cache/rate limit + pgvector search
+- ✅ Monitoring: Prometheus metrics + Grafana/alert examples in `docs/monitoring/`
+- ▶️ Next validation: Load test with Redis/pgvector + real embedder, and verify dashboards/alerts
 
 ## 📞 Support
 

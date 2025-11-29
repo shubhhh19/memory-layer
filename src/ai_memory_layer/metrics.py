@@ -32,6 +32,36 @@ if PROMETHEUS_AVAILABLE:
         "Request latency in seconds",
         ["method", "path"],
     )
+    MESSAGE_INGEST_COUNT = Counter(
+        "aiml_messages_ingested_total",
+        "Messages ingested by tenant/role/mode",
+        ["tenant", "role", "mode", "status"],
+    )
+    MEMORY_SEARCH_COUNT = Counter(
+        "aiml_memory_search_total",
+        "Search requests by tenant and cache status",
+        ["tenant", "cached"],
+    )
+    MEMORY_SEARCH_LATENCY = Histogram(
+        "aiml_memory_search_latency_seconds",
+        "Latency of memory search requests",
+        ["cached"],
+    )
+    MEMORY_SEARCH_RESULTS = Histogram(
+        "aiml_memory_search_results",
+        "Distribution of result counts per search",
+        ["tenant"],
+    )
+    EMBEDDING_JOB_COUNT = Counter(
+        "aiml_embedding_jobs_total",
+        "Embedding jobs processed by status",
+        ["status"],
+    )
+    EMBEDDING_JOB_DURATION = Histogram(
+        "aiml_embedding_job_duration_seconds",
+        "Duration of embedding generation jobs",
+        ["status"],
+    )
 
     @router.get("/metrics")
     async def metrics() -> Response:
@@ -66,3 +96,39 @@ else:
     class MetricsMiddleware(BaseHTTPMiddleware):  # type: ignore[override]
         async def dispatch(self, request: Request, call_next):
             return await call_next(request)
+
+
+def record_message_ingested(tenant_id: str, role: str, async_mode: bool, status: str) -> None:
+    """Increment counters for message ingestion."""
+    if not PROMETHEUS_AVAILABLE:  # pragma: no cover - optional dependency
+        return
+    mode = "async" if async_mode else "inline"
+    MESSAGE_INGEST_COUNT.labels(
+        tenant=tenant_id,
+        role=role,
+        mode=mode,
+        status=status,
+    ).inc()
+
+
+def record_memory_search(
+    tenant_id: str,
+    result_count: int,
+    cached: bool,
+    duration: float,
+) -> None:
+    """Record memory search metrics."""
+    if not PROMETHEUS_AVAILABLE:  # pragma: no cover - optional dependency
+        return
+    MEMORY_SEARCH_COUNT.labels(tenant=tenant_id, cached=str(cached)).inc()
+    MEMORY_SEARCH_LATENCY.labels(cached=str(cached)).observe(duration)
+    MEMORY_SEARCH_RESULTS.labels(tenant=tenant_id).observe(result_count)
+
+
+def record_embedding_job(status: str, duration: float | None = None) -> None:
+    """Record embedding job processing metrics."""
+    if not PROMETHEUS_AVAILABLE:  # pragma: no cover - optional dependency
+        return
+    EMBEDDING_JOB_COUNT.labels(status=status).inc()
+    if duration is not None:
+        EMBEDDING_JOB_DURATION.labels(status=status).observe(duration)

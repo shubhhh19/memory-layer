@@ -1,0 +1,650 @@
+{
+  "meta": {
+    "project": "AI Memory Layer",
+    "date": "2025-11-19",
+    "prepared_by": "Memory Layer Team"
+  },
+  "product_overview": "AI Memory Layer is a production-ready backend service that provides persistent, semantic memory capabilities for conversational AI systems, enabling efficient storage, retrieval, and semantic search of conversation messages with intelligent importance scoring and automated retention.",
+  "core_goals": [
+    "Enable semantic memory capabilities for AI systems to recall relevant past conversations.",
+    "Reduce development time by offering a ready-to-use REST API for memory management.",
+    "Optimize storage and cost through automated message retention policies.",
+    "Ensure production-grade quality with security, rate limiting, monitoring, and scaling support."
+  ],
+  "key_features": [
+    "Message Storage with automatic semantic embedding generation, importance scoring, and multi-tenancy support.",
+    "Semantic Search using vector similarity combined with importance scoring and temporal recency decay.",
+    "Automated Retention Policies for archiving and deleting old messages based on configurable thresholds and importance.",
+    "Configurable Rate Limiting to protect the API globally and per-tenant.",
+    "Secure API access via API key authentication, CORS, and security headers.",
+    "Comprehensive Monitoring including health checks, Prometheus metrics, structured logging, and request ID tracking.",
+    "Background Processing for asynchronous embedding generation using an internal job queue and worker process."
+  ],
+  "user_flow_summary": [
+    "A developer submits a message via POST /v1/messages containing tenant, conversation, role, and content; message is stored, embeddings generated asynchronously, and importance scored.",
+    "A user queries past messages with GET /v1/memory/search using semantic similarity to retrieve top-k relevant memories filtered by tenant and optionally conversation.",
+    "An admin or automated scheduler triggers retention policies via POST /v1/admin/retention/run to archive or delete messages based on age and importance thresholds.",
+    "System monitors health via GET /v1/admin/health and exposes Prometheus metrics for observability.",
+    "API enforces rate limits and API key authentication on every request to ensure security and prevent abuse."
+  ],
+  "validation_criteria": [
+    "Messages are stored within 100ms and embeddings generated asynchronously with accurate importance scoring.",
+    "Semantic search returns top-k relevant results within 500ms and with over 90% relevance in top-3.",
+    "Retention policies run reliably on schedule and via manual trigger, respecting importance and providing dry run capabilities.",
+    "Rate limiting enforces configured request limits with proper 429 responses and headers.",
+    "API key authentication and security headers are enforced, and request size/timeouts are respected.",
+    "Monitoring endpoints are available and metrics collected in Prometheus format with request tracing.",
+    "Background embedding jobs are processed reliably with job tracking and graceful shutdown."
+  ],
+  "code_summary": {
+    "tech_stack": [
+      "python",
+      "fastapi",
+      "sqlalchemy (async, pgvector)",
+      "postgresql / sqlite (dev)",
+      "redis",
+      "alembic",
+      "prometheus",
+      "docker / docker-compose",
+      "pytest + pytest-asyncio"
+    ],
+    "features": [
+      {
+        "name": "Message Ingestion",
+        "description": "Store conversation messages with optional metadata, compute embeddings (inline or async), importance scoring, and expose them for later retrieval.",
+        "files": [
+          "src/ai_memory_layer/routes/messages.py",
+          "src/ai_memory_layer/services/message_service.py",
+          "src/ai_memory_layer/repositories/memory_repository.py",
+          "src/ai_memory_layer/models/memory.py",
+          "src/ai_memory_layer/services/embedding.py",
+          "src/ai_memory_layer/services/importance.py",
+          "src/ai_memory_layer/services/job_queue.py",
+          "src/ai_memory_layer/schemas/messages.py"
+        ],
+        "api_doc": {
+          "openapi": "3.0.0",
+          "info": {
+            "title": "AI Memory Layer - Messages API",
+            "version": "1.0.0"
+          },
+          "paths": {
+            "/v1/messages": {
+              "post": {
+                "summary": "Create a message",
+                "description": "Stores a new message for a tenant and conversation, generates embeddings inline or enqueues an embedding job, and returns the stored message.",
+                "operationId": "createMessage",
+                "tags": [
+                  "messages"
+                ],
+                "requestBody": {
+                  "required": true,
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "$ref": "#/components/schemas/MessageCreate"
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "Message stored with inline embeddings",
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "$ref": "#/components/schemas/MessageResponse"
+                        }
+                      }
+                    }
+                  },
+                  "202": {
+                    "description": "Message stored and embedding job enqueued (async mode)",
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "$ref": "#/components/schemas/MessageResponse"
+                        }
+                      }
+                    }
+                  },
+                  "400": {
+                    "description": "Validation error"
+                  },
+                  "401": {
+                    "description": "Unauthorized (invalid or missing API key)"
+                  }
+                },
+                "security": [
+                  {
+                    "ApiKeyAuth": []
+                  }
+                ]
+              }
+            },
+            "/v1/messages/{message_id}": {
+              "get": {
+                "summary": "Get a message by ID",
+                "description": "Fetches a previously stored message by its UUID.",
+                "operationId": "getMessage",
+                "tags": [
+                  "messages"
+                ],
+                "parameters": [
+                  {
+                    "name": "message_id",
+                    "in": "path",
+                    "required": true,
+                    "schema": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                ],
+                "responses": {
+                  "200": {
+                    "description": "Message found",
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "$ref": "#/components/schemas/MessageResponse"
+                        }
+                      }
+                    }
+                  },
+                  "400": {
+                    "description": "Invalid ID format"
+                  },
+                  "401": {
+                    "description": "Unauthorized"
+                  },
+                  "404": {
+                    "description": "Message not found"
+                  }
+                },
+                "security": [
+                  {
+                    "ApiKeyAuth": []
+                  }
+                ]
+              }
+            }
+          },
+          "components": {
+            "securitySchemes": {
+              "ApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "x-api-key"
+              }
+            },
+            "schemas": {
+              "MessageCreate": {
+                "type": "object",
+                "required": [
+                  "tenant_id",
+                  "conversation_id",
+                  "role",
+                  "content"
+                ],
+                "properties": {
+                  "tenant_id": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "conversation_id": {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "assistant",
+                      "system"
+                    ]
+                  },
+                  "content": {
+                    "type": "string",
+                    "maxLength": 100000
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "importance_override": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "MessageResponse": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "tenant_id": {
+                    "type": "string"
+                  },
+                  "conversation_id": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "importance_score": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "embedding_status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "completed",
+                      "failed"
+                    ]
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "Memory Search",
+        "description": "Search stored messages using embeddings, importance scoring, and recency decay, with optional caching and candidate limits.",
+        "files": [
+          "src/ai_memory_layer/routes/memory.py",
+          "src/ai_memory_layer/services/message_service.py",
+          "src/ai_memory_layer/services/retrieval.py",
+          "src/ai_memory_layer/services/cache.py",
+          "src/ai_memory_layer/repositories/memory_repository.py",
+          "src/ai_memory_layer/schemas/memory.py"
+        ],
+        "api_doc": {
+          "openapi": "3.0.0",
+          "info": {
+            "title": "AI Memory Layer - Memory Search API",
+            "version": "1.0.0"
+          },
+          "paths": {
+            "/v1/memory/search": {
+              "get": {
+                "summary": "Search memories",
+                "description": "Searches for relevant memories for a tenant and optional conversation using semantic similarity, importance, and temporal decay.",
+                "operationId": "searchMemories",
+                "tags": [
+                  "memory"
+                ],
+                "parameters": [
+                  {
+                    "name": "tenant_id",
+                    "in": "query",
+                    "required": true,
+                    "schema": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "name": "query",
+                    "in": "query",
+                    "required": true,
+                    "schema": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "name": "conversation_id",
+                    "in": "query",
+                    "required": false,
+                    "schema": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "name": "top_k",
+                    "in": "query",
+                    "required": false,
+                    "schema": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 20,
+                      "default": 5
+                    }
+                  },
+                  {
+                    "name": "importance_min",
+                    "in": "query",
+                    "required": false,
+                    "schema": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  },
+                  {
+                    "name": "candidate_limit",
+                    "in": "query",
+                    "required": false,
+                    "schema": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000,
+                      "default": 200
+                    }
+                  }
+                ],
+                "responses": {
+                  "200": {
+                    "description": "Search results",
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "$ref": "#/components/schemas/MemorySearchResponse"
+                        }
+                      }
+                    }
+                  },
+                  "400": {
+                    "description": "Validation error"
+                  },
+                  "401": {
+                    "description": "Unauthorized"
+                  }
+                },
+                "security": [
+                  {
+                    "ApiKeyAuth": []
+                  }
+                ]
+              }
+            }
+          },
+          "components": {
+            "securitySchemes": {
+              "ApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "x-api-key"
+              }
+            },
+            "schemas": {
+              "MemorySearchResponse": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer"
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/MemorySearchResult"
+                    }
+                  }
+                }
+              },
+              "MemorySearchResult": {
+                "type": "object",
+                "properties": {
+                  "message_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "score": {
+                    "type": "number"
+                  },
+                  "similarity": {
+                    "type": "number"
+                  },
+                  "decay": {
+                    "type": "number"
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "importance": {
+                    "type": "number",
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "Health, Readiness, and Retention Admin",
+        "description": "Expose health and readiness probes for infrastructure, and an admin endpoint to run retention policies for archiving/deleting messages.",
+        "files": [
+          "src/ai_memory_layer/routes/admin.py",
+          "src/ai_memory_layer/services/health.py",
+          "src/ai_memory_layer/services/retention.py",
+          "src/ai_memory_layer/scheduler.py",
+          "src/ai_memory_layer/repositories/memory_repository.py",
+          "src/ai_memory_layer/schemas/admin.py"
+        ],
+        "api_doc": {
+          "openapi": "3.0.0",
+          "info": {
+            "title": "AI Memory Layer - Admin API",
+            "version": "1.0.0"
+          },
+          "paths": {
+            "/v1/admin/health": {
+              "get": {
+                "summary": "Liveness / health check",
+                "operationId": "health",
+                "tags": [
+                  "admin"
+                ],
+                "responses": {
+                  "200": {
+                    "description": "Service is alive",
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "$ref": "#/components/schemas/HealthResponse"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "/v1/admin/readiness": {
+              "get": {
+                "summary": "Readiness check",
+                "operationId": "readiness",
+                "tags": [
+                  "admin"
+                ],
+                "responses": {
+                  "200": {
+                    "description": "Service is ready or degraded",
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "$ref": "#/components/schemas/HealthResponse"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "/v1/admin/retention/run": {
+              "post": {
+                "summary": "Run retention",
+                "description": "Applies retention policies for a tenant to archive/delete old messages.",
+                "operationId": "runRetention",
+                "tags": [
+                  "admin"
+                ],
+                "requestBody": {
+                  "required": true,
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "$ref": "#/components/schemas/RetentionRunRequest"
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "Retention run result",
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "$ref": "#/components/schemas/RetentionRunResponse"
+                        }
+                      }
+                    }
+                  },
+                  "400": {
+                    "description": "No actions specified"
+                  },
+                  "401": {
+                    "description": "Unauthorized"
+                  }
+                },
+                "security": [
+                  {
+                    "ApiKeyAuth": []
+                  }
+                ]
+              }
+            }
+          },
+          "components": {
+            "securitySchemes": {
+              "ApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "x-api-key"
+              }
+            },
+            "schemas": {
+              "RetentionRunRequest": {
+                "type": "object",
+                "required": [
+                  "tenant_id"
+                ],
+                "properties": {
+                  "tenant_id": {
+                    "type": "string"
+                  },
+                  "actions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "archive",
+                        "delete"
+                      ]
+                    },
+                    "default": [
+                      "archive",
+                      "delete"
+                    ]
+                  },
+                  "dry_run": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                }
+              },
+              "RetentionRunResponse": {
+                "type": "object",
+                "properties": {
+                  "archived": {
+                    "type": "integer"
+                  },
+                  "deleted": {
+                    "type": "integer"
+                  },
+                  "dry_run": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "HealthResponse": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ok",
+                      "degraded",
+                      "down"
+                    ]
+                  },
+                  "database": {
+                    "type": "string",
+                    "enum": [
+                      "ok",
+                      "down"
+                    ]
+                  },
+                  "timestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "latency_ms": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "uptime_seconds": {
+                    "type": "number"
+                  },
+                  "environment": {
+                    "type": "string"
+                  },
+                  "version": {
+                    "type": "string"
+                  },
+                  "embedding": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

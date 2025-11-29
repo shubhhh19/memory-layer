@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -16,17 +14,43 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
   api:
     build: .
-    command: uvicorn ai_memory_layer.main:app --host 0.0.0.0 --port 8000
+    command: .venv/bin/uvicorn ai_memory_layer.main:app --host 0.0.0.0 --port 8000
     environment:
       MEMORY_DATABASE_URL: postgresql+asyncpg://memory:memory@db:5432/memory_layer
       MEMORY_ENVIRONMENT: docker
       MEMORY_SQL_ECHO: "false"
       MEMORY_ENABLE_METRICS: "true"
       MEMORY_API_KEYS: ""
+      MEMORY_REDIS_URL: redis://redis:6379/0
+      MEMORY_ASYNC_EMBEDDINGS: "true"
     ports:
       - "8001:8000"
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build: .
+    command: .venv/bin/aiml-worker
+    environment:
+      MEMORY_DATABASE_URL: postgresql+asyncpg://memory:memory@db:5432/memory_layer
+      MEMORY_ENVIRONMENT: docker
+      MEMORY_SQL_ECHO: "false"
+      MEMORY_ENABLE_METRICS: "false"
+      MEMORY_REDIS_URL: redis://redis:6379/0
+      MEMORY_ASYNC_EMBEDDINGS: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started

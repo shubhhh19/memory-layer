@@ -1,0 +1,52 @@
+[
+  {
+    "id": "TC001",
+    "title": "post message create message with inline embeddings",
+    "description": "Test the POST /v1/messages endpoint to verify that a message is stored successfully with inline embedding generation, returning a 200 status and the correct message response structure."
+  },
+  {
+    "id": "TC002",
+    "title": "post message create message with async embedding job",
+    "description": "Test the POST /v1/messages endpoint to verify that a message is stored and an embedding job is enqueued asynchronously, returning a 202 status and the correct message response structure."
+  },
+  {
+    "id": "TC003",
+    "title": "get message retrieve message by valid id",
+    "description": "Test the GET /v1/messages/{message_id} endpoint to fetch a stored message by its UUID, expecting a 200 status and the correct message response data."
+  },
+  {
+    "id": "TC004",
+    "title": "get message handle invalid message id format",
+    "description": "Test the GET /v1/messages/{message_id} endpoint with an invalid UUID format to verify that the API returns a 400 validation error."
+  },
+  {
+    "id": "TC005",
+    "title": "get message handle message not found",
+    "description": "Test the GET /v1/messages/{message_id} endpoint with a valid UUID that does not exist in storage, expecting a 404 not found response."
+  },
+  {
+    "id": "TC006",
+    "title": "get memory search perform semantic search with filters",
+    "description": "Test the GET /v1/memory/search endpoint to perform a semantic search for memories filtered by tenant_id and optional conversation_id, verifying that the top-k relevant results are returned with correct scoring and within performance criteria."
+  },
+  {
+    "id": "TC007",
+    "title": "post admin retention run apply retention policies",
+    "description": "Test the POST /v1/admin/retention/run endpoint to trigger retention policies for a tenant, verifying that messages are archived or deleted according to specified actions and that dry run mode works correctly."
+  },
+  {
+    "id": "TC008",
+    "title": "get admin health check service liveness",
+    "description": "Test the GET /v1/admin/health endpoint to verify that the service liveness and health status are reported correctly with expected fields."
+  },
+  {
+    "id": "TC009",
+    "title": "get admin readiness check service readiness",
+    "description": "Test the GET /v1/admin/readiness endpoint to verify that the service readiness status is reported correctly, including degraded states if applicable."
+  },
+  {
+    "id": "TC010",
+    "title": "post message enforce api key authentication",
+    "description": "Test that all POST endpoints including /v1/messages and /v1/admin/retention/run enforce API key authentication, returning 401 Unauthorized for missing or invalid API keys."
+  }
+]

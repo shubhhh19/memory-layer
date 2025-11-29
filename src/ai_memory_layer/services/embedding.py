@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import math
-from typing import Protocol, Sequence
-
-import asyncio
 from functools import lru_cache
+from typing import Any, Protocol, Sequence
 
 from tenacity import (
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
 
 from ai_memory_layer.config import get_settings
@@ -22,15 +21,8 @@ from ai_memory_layer.services.circuit_breaker import CircuitBreaker, CircuitOpen
 
 logger = get_logger(component="embedding_service")
 
-try:  # pragma: no cover - optional dependency
-    from sentence_transformers import SentenceTransformer
-except Exception:  # pragma: no cover
-    SentenceTransformer = None  # type: ignore[assignment]
-    
-try:
-    import google.generativeai as genai
-except ImportError:
-    genai = None  # type: ignore[assignment]
+SentenceTransformer: Any | None = None
+_GENAI_MODULE: Any | None = None
 
 
 class EmbeddingService(Protocol):
@@ -81,10 +73,7 @@ class SentenceTransformerEmbeddingService:
     """Embedding provider backed by HuggingFace sentence-transformers."""
 
     def __init__(self, model_name: str, dimensions: int) -> None:
-        if SentenceTransformer is None:
-            raise RuntimeError(
-                "sentence-transformers is required for sentence_transformer provider"
-            )
+        _load_sentence_transformer()
         self.model = _load_model(model_name)
         self.dimensions = dimensions
 
@@ -112,19 +101,29 @@ class SentenceTransformerEmbeddingService:
             raise
 
 
+def _load_sentence_transformer():
+    global SentenceTransformer  # noqa: PLW0603
+    if SentenceTransformer is not None:
+        return SentenceTransformer
+    try:  # pragma: no cover - optional dependency
+        from sentence_transformers import SentenceTransformer as _SentenceTransformer
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError("sentence-transformers is required for sentence_transformer provider") from exc
+    SentenceTransformer = _SentenceTransformer
+    return SentenceTransformer
+
+
 @lru_cache(maxsize=1)
 def _load_model(model_name: str):
-    if SentenceTransformer is None:  # pragma: no cover
-        raise RuntimeError("sentence-transformers missing")
-    return SentenceTransformer(model_name)
+    model_cls = _load_sentence_transformer()
+    return model_cls(model_name)
 
 
 class GoogleGeminiEmbeddingService:
     """Embedding provider backed by Google Gemini API."""
 
     def __init__(self, api_key: str, model_name: str = "models/embedding-001", dimensions: int = 768) -> None:
-        if genai is None:
-            raise RuntimeError("google-generativeai is required for google_gemini provider")
+        genai = _load_genai()
         if not api_key:
             raise ValueError("GEMINI_API_KEY is required for google_gemini provider")
             
@@ -200,3 +199,15 @@ def build_embedding_service(provider: str | None = None) -> EmbeddingService:
     if base is None:
         return fallback
     return CircuitBreakerEmbeddingService(primary=base, fallback=fallback, breaker=breaker)
+
+
+def _load_genai():
+    global _GENAI_MODULE  # noqa: PLW0603
+    if _GENAI_MODULE is not None:
+        return _GENAI_MODULE
+    try:  # pragma: no cover - optional dependency
+        import google.generativeai as genai  # type: ignore[import]
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("google-generativeai is required for google_gemini provider") from exc
+    _GENAI_MODULE = genai
+    return _GENAI_MODULE

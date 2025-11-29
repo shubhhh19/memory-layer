@@ -33,4 +33,4 @@ async def test_api_key_required_when_configured(
                 "content": "Secure",
             },
         )
-        assert response.status_code == 202
+        assert response.status_code == 200

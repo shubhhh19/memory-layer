@@ -112,18 +112,17 @@ Client → FastAPI → Services → Repositories → Database
 - Importance scoring (recency + role + explicit)
 - Retention policies (archive/delete)
 - Google Gemini embedding integration
-- Rate limiting (global)
+- Rate limiting (global + per-tenant) with Redis-backed storage
 - CORS configuration
 - Health checks & metrics
 - API key authentication
 - Comprehensive test suite
-
-⚠️ **Remaining for Full Production:**
-- Fix database session context manager issue in search
-- Implement per-tenant rate limiting
-- Add background job queue for async embeddings
-- Set up monitoring/alerting
-- Load testing
+- Per-tenant & global rate limiting
+- Background embedding job queue (in-process worker or standalone)
+- Monitoring dashboards & alert rules (Prometheus/Grafana)
+- Load testing helper script
+- Redis-backed cache for search/embeddings
+- Postgres/pgvector vector search (ORDER BY <->) with fallback for SQLite/dev
 
 ## 🔧 Configuration
 
@@ -133,10 +132,15 @@ Key environment variables (see `.env.example`):
 # Database
 MEMORY_DATABASE_URL=postgresql+asyncpg://user:pass@localhost/memory_layer
 
+# Cache / Rate Limiting
+MEMORY_REDIS_URL=redis://localhost:6379/0   # Required in production
+MEMORY_REQUIRE_REDIS_IN_PRODUCTION=true
+
 # Embeddings
 MEMORY_EMBEDDING_PROVIDER=google_gemini  # or sentence_transformer, mock
 MEMORY_GEMINI_API_KEY=your-api-key-here
-MEMORY_EMBEDDING_DIMENSIONS=768  # Gemini embedding-001 default
+MEMORY_EMBEDDING_DIMENSIONS=1536  # default; use 768 for Gemini embedding-001
+MEMORY_ASYNC_EMBEDDINGS=true  # Enable background worker
 
 # Security
 MEMORY_API_KEYS=key1,key2,key3  # Comma-separated
@@ -144,6 +148,23 @@ MEMORY_ALLOWED_ORIGINS=*  # Or specific domains
 
 # Rate Limiting
 MEMORY_GLOBAL_RATE_LIMIT=200/minute
+MEMORY_TENANT_RATE_LIMIT=120/minute
+
+# Notes
+# - The embeddings column accepts any configured dimension. Just keep
+#   MEMORY_EMBEDDING_DIMENSIONS in sync with your provider (e.g. 768 for Gemini).
+# - Redis-backed rate limiting and caching run fully async to avoid blocking the event loop.
+# - Set `AIML_USE_PGVECTOR_STUB=1` when running the suite on SQLite-only or sandboxed
+#   environments that cannot import the pgvector binary; production deployments
+#   should leave this unset to keep real pgvector support.
+
+# Retention
+MEMORY_RETENTION_SCHEDULE_SECONDS=86400
+MEMORY_RETENTION_TENANTS=*  # "*" runs for all tenants found
+
+# Health/Readiness
+MEMORY_HEALTH_EMBED_CHECK_ENABLED=false
+MEMORY_READINESS_EMBED_TIMEOUT_SECONDS=3.0
 ```
 
 ## 📚 API Reference
@@ -190,14 +211,43 @@ Search for relevant memories.
 ```
 
 ### GET /v1/admin/health
-Health check endpoint.
+Lightweight liveness (DB ping).
+
+### GET /v1/admin/readiness
+Readiness probe (DB + optional embedding provider check).
 
 ### POST /v1/admin/retention/run
 Manually trigger retention job.
 
+## ⚙️ Async Embeddings
+
+- Set `MEMORY_ASYNC_EMBEDDINGS=true` to enqueue embedding generation in the background.
+- Start the worker alongside the API:
+  ```bash
+  uv run aiml-worker
+  ```
+- The API process also runs an in-process queue for small deployments; the worker keeps the job runner isolated for production.
+- Responses return `200 OK` when embeddings are computed inline, and `202 Accepted` when queued for background processing.
+
 ## 🚢 Deployment
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed production deployment guide.
+
+## 📈 Observability
+
+- Prometheus metrics at `/metrics` (request counts/latency, search stats, embedding job durations).
+- Grafana dashboard + example alert rules in `docs/monitoring/`.
+- Logs are structured (JSON) with request IDs for easy correlation.
+
+## 🧪 Load Testing
+
+Use the bundled async helper to sanity-check throughput and rate limits:
+
+```bash
+uv run python scripts/load_test.py --requests 200 --concurrency 25 --api-key <key>
+```
+
+Override `--base-url` and `--tenant-id` as needed. The script reports success rate, average latency, and p95 latency.
 
 ## 📝 License
 

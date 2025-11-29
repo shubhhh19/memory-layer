@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import time
 from itertools import cycle
-from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from sqlalchemy import text
@@ -12,15 +12,15 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
-    async_sessionmaker,
     create_async_engine,
+    async_sessionmaker,
 )
 from sqlalchemy.orm import DeclarativeBase
 from tenacity import (
     retry,
-    stop_after_attempt,
-    wait_exponential,
     retry_if_exception_type,
+    wait_exponential,
+    stop_after_attempt,
 )
 
 from ai_memory_layer.config import get_settings
@@ -104,23 +104,48 @@ async def init_engine() -> None:
 
 
 @asynccontextmanager
+async def _session_context(
+    factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[AsyncSession]:
+    """Provide a session that always rolls back on error and closes cleanly."""
+    session = factory()
+    try:
+        yield session
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
 async def get_session() -> AsyncIterator[AsyncSession]:
     """Yield an async session."""
     if SessionFactory is None:
         await init_engine()
     assert SessionFactory is not None  # nosec - guarded above
-    async with SessionFactory() as session:
+    async with _session_context(SessionFactory) as session:
         yield session
 
 
-@asynccontextmanager
 async def get_read_session() -> AsyncIterator[AsyncSession]:
     """Yield an async session from a read replica when configured."""
     if SessionFactory is None:
         await init_engine()
     factory = _next_read_factory()
-    async with factory() as session:
-        yield session
+    try:
+        async with _session_context(factory) as session:
+            yield session
+    except Exception as exc:
+        if factory is not SessionFactory and read_session_factories:
+            logger.warning(
+                "read_session_failed_fallback",
+                error=str(exc),
+            )
+            assert SessionFactory is not None  # nosec - guarded
+            async with _session_context(SessionFactory) as session:
+                yield session
+        else:
+            raise
 
 
 @asynccontextmanager
@@ -129,7 +154,7 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
     if SessionFactory is None:
         await init_engine()
     assert SessionFactory is not None  # nosec - guarded above
-    async with SessionFactory() as session:
+    async with _session_context(SessionFactory) as session:
         yield session
 
 

@@ -9,6 +9,7 @@ from typing import Sequence
 from ai_memory_layer.config import get_settings
 from ai_memory_layer.database import session_scope
 from ai_memory_layer.logging import get_logger
+from ai_memory_layer.repositories.memory_repository import MemoryRepository
 from ai_memory_layer.services.retention import RetentionService
 
 logger = get_logger(component="retention_scheduler")
@@ -28,6 +29,7 @@ class RetentionScheduler:
         self.interval = interval_seconds if interval_seconds is not None else settings.retention_schedule_seconds
         self.tenants = list(tenant_ids if tenant_ids is not None else settings.retention_tenants)
         self.service = service or RetentionService()
+        self.repository = MemoryRepository()
         self._task: asyncio.Task | None = None
         self._stopped = asyncio.Event()
 
@@ -60,7 +62,11 @@ class RetentionScheduler:
         """Execute one full retention pass."""
         if not self.tenants:
             return
-        for tenant in self.tenants:
+        tenant_list = self.tenants
+        if self.tenants == ["*"]:
+            async with session_scope() as session:
+                tenant_list = list(await self.repository.list_tenants(session))
+        for tenant in tenant_list:
             async with session_scope() as session:
                 await self.service.run(session, tenant_id=tenant)
-        logger.debug("retention_scheduler_cycle_completed", tenants=self.tenants)
+        logger.debug("retention_scheduler_cycle_completed", tenants=tenant_list)

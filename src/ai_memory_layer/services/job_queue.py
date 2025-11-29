@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
-from typing import Sequence
+from contextlib import AbstractAsyncContextManager, suppress
+from typing import Callable, Sequence
 from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_memory_layer.config import get_settings
 from ai_memory_layer.database import session_scope
@@ -27,6 +29,8 @@ class EmbeddingJobQueue:
         repository: MemoryRepository | None = None,
         poll_interval: float | None = None,
         batch_size: int | None = None,
+        session_provider: Callable[[], AbstractAsyncContextManager[AsyncSession]]
+        | None = None,
     ) -> None:
         settings = get_settings()
         self.poll_interval = poll_interval or settings.embedding_job_poll_seconds
@@ -35,6 +39,7 @@ class EmbeddingJobQueue:
         self.retry_backoff_seconds = settings.embedding_job_retry_backoff_seconds
         self.repository = repository or MemoryRepository()
         self.service = service or MessageService()
+        self.session_provider = session_provider or session_scope
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
@@ -91,7 +96,7 @@ class EmbeddingJobQueue:
         return processed
 
     async def _claim_jobs(self) -> Sequence[EmbeddingJob]:
-        async with session_scope() as session:
+        async with self.session_provider() as session:
             jobs = await self.repository.claim_embedding_jobs(
                 session,
                 limit=self.batch_size,
@@ -102,7 +107,7 @@ class EmbeddingJobQueue:
             return jobs
 
     async def _process_job(self, job_id: UUID) -> None:
-        async with session_scope() as session:
+        async with self.session_provider() as session:
             job = await self.repository.get_embedding_job(session, job_id)
             if job is None:
                 return

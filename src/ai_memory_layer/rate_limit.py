@@ -1,92 +1,298 @@
-"""In-process rate limiting middleware."""
+"""Async-aware rate limiting middleware."""
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from collections import defaultdict, deque
-from typing import Callable
+from dataclasses import dataclass
+from typing import Callable, NamedTuple
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Request, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 from ai_memory_layer.config import get_settings
+from ai_memory_layer.logging import get_logger
 
-RATE_LIMIT_PATTERN = re.compile(r"(?P<count>\d+)\/(?P<unit>second|minute|hour)")
-_LIMITERS: dict[str, RateLimiter] = {}
-_TENANT_LIMITERS: dict[str, RateLimiter] = {}
+try:  # pragma: no cover - optional dependency path
+    import redis.asyncio as redis_asyncio
+except Exception:  # pragma: no cover
+    redis_asyncio = None  # type: ignore[assignment]
 
-
-class RateLimiter:
-    def __init__(self, limit: str) -> None:
-        self.max_calls, self.window = self._parse(limit)
-        self.calls: defaultdict[str, deque[float]] = defaultdict(deque)
-
-    def _parse(self, limit: str) -> tuple[int, float]:
-        match = RATE_LIMIT_PATTERN.fullmatch(limit.replace(" ", ""))
-        if not match:
-            raise ValueError(f"Invalid rate limit format: {limit}")
-        count = int(match.group("count"))
-        unit = match.group("unit")
-        seconds = {"second": 1, "minute": 60, "hour": 3600}[unit]
-        return count, float(seconds)
-
-    def hit(self, identifier: str) -> bool:
-        now = time.monotonic()
-        q = self.calls[identifier]
-        while q and now - q[0] > self.window:
-            q.popleft()
-        if len(q) >= self.max_calls:
-            return False
-        q.append(now)
-        return True
+logger = get_logger(component="rate_limit")
 
 
-def rate_limit_dependency(limit: str | None = None) -> Callable[[Request], None]:
-    def dependency(request: Request) -> None:
-        limiter = _get_limiter(limit)
-        key = request.headers.get("x-forwarded-for") or request.client.host or "unknown"
-        if not limiter.hit(key):
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Rate limit exceeded",
+@dataclass(frozen=True)
+class RateLimitConfig:
+    amount: int
+    window_seconds: int
+
+
+class RateLimitResult(NamedTuple):
+    allowed: bool
+    count: int
+    reset_epoch_ms: int
+
+
+class BaseRateLimiter:
+    async def hit(self, config: RateLimitConfig, identifier: str) -> RateLimitResult:  # pragma: no cover - interface
+        raise NotImplementedError
+
+
+class InMemoryRateLimiter(BaseRateLimiter):
+    """Simple fixed-window limiter safe for asyncio usage."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._windows: dict[str, deque[float]] = defaultdict(deque)
+
+    async def hit(self, config: RateLimitConfig, identifier: str) -> RateLimitResult:
+        key = self._key(config, identifier)
+        now = time.time()
+        window_start = now - config.window_seconds
+        async with self._lock:
+            entries = self._windows[key]
+            while entries and entries[0] <= window_start:
+                entries.popleft()
+            entries.append(now)
+            count = len(entries)
+            allowed = count <= config.amount
+            reset = int((entries[0] + config.window_seconds) * 1000) if entries else int(
+                (now + config.window_seconds) * 1000
             )
+        return RateLimitResult(allowed=allowed, count=count, reset_epoch_ms=reset)
 
-    return dependency
-
-
-def enforce_tenant_rate_limit(tenant_id: str | None, limit: str | None = None) -> None:
-    """Apply per-tenant throttling."""
-    if not tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="tenant_id required for rate limiting",
-        )
-    limiter = _get_tenant_limiter(limit)
-    if not limiter.hit(tenant_id):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Tenant rate limit exceeded",
-        )
+    def _key(self, config: RateLimitConfig, identifier: str) -> str:
+        return f"{config.amount}:{config.window_seconds}:{identifier}"
 
 
-def _get_limiter(limit: str | None) -> RateLimiter:
-    limit_string = limit or get_settings().global_rate_limit
-    limiter = _LIMITERS.get(limit_string)
-    if limiter is None:
-        limiter = RateLimiter(limit_string)
-        _LIMITERS[limit_string] = limiter
-    return limiter
+class RedisRateLimiter(BaseRateLimiter):
+    """Redis-backed limiter implemented with a Lua script for atomicity."""
+
+    LUA_SCRIPT = """
+    local current = redis.call('INCR', KEYS[1])
+    if current == 1 then
+        redis.call('PEXPIRE', KEYS[1], ARGV[1])
+    end
+    local ttl = redis.call('PTTL', KEYS[1])
+    return {current, ttl}
+    """
+
+    def __init__(self, url: str, prefix: str = "aiml:ratelimit") -> None:
+        if redis_asyncio is None:  # pragma: no cover - dependency guard
+            raise RuntimeError("redis>=5 is required for Redis-backed rate limiting")
+        self.redis = redis_asyncio.from_url(url)
+        self.prefix = prefix
+
+    async def hit(self, config: RateLimitConfig, identifier: str) -> RateLimitResult:
+        key = f"{self.prefix}:{config.amount}:{config.window_seconds}:{identifier}"
+        window_ms = config.window_seconds * 1000
+        result = await self.redis.eval(self.LUA_SCRIPT, 1, key, window_ms)
+        count = int(result[0])
+        ttl_ms = int(result[1])
+        if ttl_ms < 0:
+            ttl_ms = window_ms
+        allowed = count <= config.amount
+        reset_epoch_ms = int(time.time() * 1000 + ttl_ms)
+        return RateLimitResult(allowed=allowed, count=count, reset_epoch_ms=reset_epoch_ms)
 
 
-def _get_tenant_limiter(limit: str | None) -> RateLimiter:
-    limit_string = limit or get_settings().tenant_rate_limit
-    limiter = _TENANT_LIMITERS.get(limit_string)
-    if limiter is None:
-        limiter = RateLimiter(limit_string)
-        _TENANT_LIMITERS[limit_string] = limiter
-    return limiter
+_limiter: BaseRateLimiter | None = None
+
+
+def _build_limiter() -> BaseRateLimiter:
+    settings = get_settings()
+    if settings.redis_url:
+        try:
+            limiter = RedisRateLimiter(settings.redis_url)
+            logger.info("rate_limit_redis_backend_enabled")
+            return limiter
+        except Exception as exc:
+            logger.warning("rate_limit_redis_backend_failed", error=str(exc))
+            if settings.environment.lower() == "production" and settings.require_redis_in_production:
+                raise
+    logger.info("rate_limit_in_memory_backend_enabled")
+    return InMemoryRateLimiter()
+
+
+def get_rate_limiter() -> BaseRateLimiter:
+    global _limiter  # noqa: PLW0603
+    if _limiter is None:
+        _limiter = _build_limiter()
+    return _limiter
 
 
 def reset_rate_limiter_cache() -> None:
-    _LIMITERS.clear()
-    _TENANT_LIMITERS.clear()
+    """Reset limiter instance (used by tests/settings overrides)."""
+    global _limiter  # noqa: PLW0603
+    _limiter = _build_limiter()
+
+
+def _extract_tenant_id_hint(request: Request) -> str | None:
+    """Pull tenant identifier from headers, path, or query."""
+    tenant_id = (
+        request.headers.get("x-tenant-id")
+        or request.path_params.get("tenant_id")
+        or request.query_params.get("tenant_id")
+    )
+    return tenant_id
+
+
+async def _resolve_tenant_id(request: Request) -> str | None:
+    """Try multiple sources to resolve the tenant id, including JSON payloads."""
+    tenant_id = _extract_tenant_id_hint(request)
+    if tenant_id:
+        return tenant_id
+    if request.method in {"POST", "PUT", "PATCH"} and request.headers.get("content-type", "").startswith(
+        "application/json"
+    ):
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                tenant_id = body.get("tenant_id")
+        except Exception:  # pragma: no cover - defensive
+            tenant_id = None
+    return tenant_id
+
+
+def get_client_identifier(request: Request) -> str:
+    """Get unique identifier for rate limiting (tenant or IP)."""
+    tenant_id = _extract_tenant_id_hint(request)
+    if tenant_id:
+        return f"tenant:{tenant_id}"
+
+    return _get_ip_identifier(request)
+
+
+def _get_ip_identifier(request: Request) -> str:
+    """Prefer forwarded-for header, fall back to client host."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return f"ip:{forwarded.split(',')[0].strip()}"
+    client_host = request.client.host if request.client else "unknown"
+    return f"ip:{client_host}"
+
+
+def _parse_limit(limit_str: str) -> RateLimitConfig:
+    pattern = re.compile(
+        r"^\s*(\d+)\s*(?:/|\s*/?\s*per\s+)?\s*(second|minute|hour|day)s?\s*$",
+        re.IGNORECASE,
+    )
+    match = pattern.match(limit_str)
+    if not match:
+        raise ValueError(f"Invalid rate limit format: {limit_str}")
+    amount = int(match.group(1))
+    unit = match.group(2).lower()
+    unit_seconds = {
+        "second": 1,
+        "minute": 60,
+        "hour": 3600,
+        "day": 86400,
+    }[unit]
+    return RateLimitConfig(amount=amount, window_seconds=unit_seconds)
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Async-safe rate limiting middleware."""
+
+    def __init__(self, app, rate_limit: str | None = None, tenant_rate_limit: str | None = None):
+        super().__init__(app)
+        settings = get_settings()
+        self.global_limit_str = rate_limit or settings.global_rate_limit
+        self.tenant_limit_str = tenant_rate_limit or settings.tenant_rate_limit
+        self.global_limit = _parse_limit(self.global_limit_str)
+        self.tenant_limit = _parse_limit(self.tenant_limit_str)
+        self.limiter = get_rate_limiter()
+        logger.info(
+            "rate_limit_initialized",
+            global_limit=self.global_limit_str,
+            tenant_limit=self.tenant_limit_str,
+        )
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        if request.url.path in ["/v1/admin/health", "/v1/admin/readiness", "/metrics", "/docs", "/openapi.json"]:
+            return await call_next(request)
+
+        tenant_id = await _resolve_tenant_id(request)
+        global_identifier = _get_ip_identifier(request)
+        tenant_identifier = f"tenant:{tenant_id}" if tenant_id else None
+
+        global_state = await self.limiter.hit(self.global_limit, global_identifier)
+        if not global_state.allowed:
+            return self._reject(request, self.global_limit_str, "global", None, global_state.reset_epoch_ms)
+
+        tenant_state = None
+        if tenant_identifier:
+            tenant_state = await self.limiter.hit(self.tenant_limit, tenant_identifier)
+            if not tenant_state.allowed:
+                return self._reject(
+                    request,
+                    self.tenant_limit_str,
+                    "tenant",
+                    tenant_id,
+                    tenant_state.reset_epoch_ms,
+                )
+
+        response = await call_next(request)
+        self._apply_headers(response, global_state, tenant_state)
+        return response
+
+    def _apply_headers(
+        self,
+        response: Response,
+        global_state: RateLimitResult,
+        tenant_state: RateLimitResult | None,
+    ) -> None:
+        response.headers["X-RateLimit-Limit"] = str(self.global_limit.amount)
+        response.headers["X-RateLimit-Remaining"] = str(
+            max(0, self.global_limit.amount - global_state.count)
+        )
+        response.headers["X-RateLimit-Reset"] = str(global_state.reset_epoch_ms // 1000)
+        if tenant_state:
+            response.headers["X-RateLimit-Tenant-Limit"] = str(self.tenant_limit.amount)
+            response.headers["X-RateLimit-Tenant-Remaining"] = str(
+                max(0, self.tenant_limit.amount - tenant_state.count)
+            )
+            response.headers["X-RateLimit-Tenant-Reset"] = str(tenant_state.reset_epoch_ms // 1000)
+
+    def _reject(
+        self,
+        request: Request,
+        limit_str: str,
+        scope: str,
+        tenant_id: str | None,
+        reset_epoch_ms: int,
+    ) -> JSONResponse:
+        logger.warning(
+            "rate_limit_exceeded",
+            identifier=get_client_identifier(request),
+            scope=scope,
+            tenant_id=tenant_id,
+            path=request.url.path,
+            limit=limit_str,
+        )
+        retry_after = max(1, int((reset_epoch_ms / 1000) - time.time()))
+        request_id = getattr(request.state, "request_id", "unknown")
+        detail = (
+            f"Tenant rate limit exceeded for {tenant_id}: {limit_str}"
+            if scope == "tenant"
+            else f"Rate limit exceeded: {limit_str}"
+        )
+        return JSONResponse(
+            status_code=429,
+            content={
+                "detail": detail,
+                "retry_after": retry_after,
+            },
+            headers={
+                "Retry-After": str(retry_after),
+                "X-Request-ID": request_id,
+            },
+        )
+
+
+def enforce_tenant_rate_limit(tenant_id: str) -> None:
+    """Legacy hook used by a few call sites (sync contexts)."""
+    raise RuntimeError("enforce_tenant_rate_limit is no longer supported; use middleware path instead")

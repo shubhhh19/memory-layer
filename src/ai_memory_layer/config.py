@@ -1,8 +1,11 @@
 """Configuration for the AI Memory Layer service."""
 
+import logging
+import os
 from functools import lru_cache
 from typing import Any, Literal
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
@@ -34,15 +37,25 @@ class ImportanceWeights(BaseModel):
         )
 
 
+_LOGGER = logging.getLogger("ai_memory_layer.config")
+
+# Only load .env if MEMORY_DATABASE_URL is not already set (e.g., in Docker)
+if not os.environ.get("MEMORY_DATABASE_URL"):
+    try:  # pragma: no cover - filesystem guard
+        load_dotenv(".env", override=False)
+    except PermissionError:
+        _LOGGER.warning("env_file_unreadable", extra={"path": ".env"})
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="MEMORY_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="MEMORY_", extra="ignore")
 
     app_name: str = "AI Memory Layer"
     environment: str = Field(default="local", description="Deployment environment name")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     database_url: str = Field(
-        default="sqlite+aiosqlite:///./memory_layer.db", alias="DATABASE_URL"
+        default="sqlite+aiosqlite:///./memory_layer.db"
     )
     read_replica_urls: list[str] = Field(default_factory=list, alias="READ_REPLICA_URLS")
     sql_echo: bool = Field(default=False, alias="SQL_ECHO")
@@ -52,7 +65,7 @@ class Settings(BaseSettings):
 
     embedding_dimensions: int = Field(default=1536, alias="EMBEDDING_DIMENSIONS")
     embedding_provider: Literal["mock", "sentence_transformer", "google_gemini"] = Field(
-        default="sentence_transformer", alias="EMBEDDING_PROVIDER"
+        default="mock", alias="EMBEDDING_PROVIDER"
     )
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     embedding_model_name: str = Field(
@@ -62,7 +75,7 @@ class Settings(BaseSettings):
     importance_weights: ImportanceWeights = Field(
         default_factory=ImportanceWeights, alias="IMPORTANCE_WEIGHTS"
     )
-    async_embeddings: bool = Field(default=False, alias="ASYNC_EMBEDDINGS")
+    async_embeddings: bool = Field(default=False)
     embedding_job_poll_seconds: float = Field(default=1.0, alias="EMBEDDING_JOB_POLL_SECONDS")
     embedding_job_batch_size: int = Field(default=10, alias="EMBEDDING_JOB_BATCH_SIZE")
     embedding_job_max_attempts: int = Field(default=3, alias="EMBEDDING_JOB_MAX_ATTEMPTS")
@@ -75,8 +88,8 @@ class Settings(BaseSettings):
         default=0.35, alias="RETENTION_IMPORTANCE_THRESHOLD"
     )
     retention_delete_after_days: int = Field(default=90, alias="RETENTION_DELETE_AFTER_DAYS")
-    retention_schedule_seconds: int = Field(default=0, alias="RETENTION_SCHEDULE_SECONDS")
-    retention_tenants: list[str] = Field(default_factory=list, alias="RETENTION_TENANTS")
+    retention_schedule_seconds: int = Field(default=86400, alias="RETENTION_SCHEDULE_SECONDS")
+    retention_tenants: list[str] = Field(default_factory=lambda: ["*"], alias="RETENTION_TENANTS")
 
     healthcheck_timeout_seconds: float = Field(
         default=2.0, alias="HEALTHCHECK_TIMEOUT_SECONDS"
@@ -94,6 +107,10 @@ class Settings(BaseSettings):
     cache_embedding_ttl_seconds: int = Field(default=3600, alias="CACHE_EMBEDDING_TTL_SECONDS")
     circuit_failure_threshold: int = Field(default=5, alias="CIRCUIT_FAILURE_THRESHOLD")
     circuit_recovery_seconds: int = Field(default=30, alias="CIRCUIT_RECOVERY_SECONDS")
+    redis_url: str | None = Field(default=None, alias="REDIS_URL")
+    require_redis_in_production: bool = Field(default=True, alias="REQUIRE_REDIS_IN_PRODUCTION")
+    health_embed_check_enabled: bool = Field(default=False, alias="HEALTH_EMBED_CHECK_ENABLED")
+    readiness_embed_timeout_seconds: float = Field(default=3.0, alias="READINESS_EMBED_TIMEOUT_SECONDS")
 
     @field_validator("api_keys", mode="before")
     @classmethod

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
+import json
 from typing import Any
 
 from ai_memory_layer.config import get_settings
@@ -58,8 +59,41 @@ class InMemoryCache(CacheBackend):
                     self._store.pop(key, None)
 
 
+class RedisCache(CacheBackend):
+    """Redis-backed cache for multi-process deployments."""
+
+    def __init__(self, url: str, prefix: str = "aiml") -> None:
+        try:
+            import redis.asyncio as redis
+        except Exception as exc:  # pragma: no cover - import guard
+            raise RuntimeError("redis dependency missing; install redis>=5") from exc
+        self.redis = redis.from_url(url)
+        self.prefix = prefix
+
+    def _key(self, key: str) -> str:
+        return f"{self.prefix}:{key}"
+
+    async def get(self, key: str) -> Any | None:
+        raw = await self.redis.get(self._key(key))
+        if raw is None:
+            return None
+        return json.loads(raw)
+
+    async def set(self, key: str, value: Any, ttl: float) -> None:
+        await self.redis.set(self._key(key), json.dumps(value), ex=ttl)
+
+    async def delete_prefix(self, prefix: str) -> None:
+        scan_prefix = f"{self.prefix}:{prefix}*"
+        async for match in self.redis.scan_iter(match=scan_prefix):
+            await self.redis.delete(match)
+
+
 def _default_backend() -> CacheBackend:
     settings = get_settings()
+    if settings.redis_url:
+        return RedisCache(settings.redis_url)
+    if settings.environment.lower() == "production" and settings.require_redis_in_production:
+        raise RuntimeError("Redis is required for cache in production environment")
     return InMemoryCache(max_items=settings.cache_max_items)
 
 

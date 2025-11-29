@@ -11,7 +11,7 @@ async def test_full_workflow(client: AsyncClient):
         "content": "Your order has shipped.",
     }
     response = await client.post("/v1/messages", json=payload)
-    assert response.status_code == 202
+    assert response.status_code == 200
     message_id = response.json()["id"]
 
     retention_response = await client.post(
