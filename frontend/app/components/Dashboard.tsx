@@ -134,17 +134,17 @@ export default function Dashboard() {
 
     return (
         <div className="min-h-screen bg-[var(--background)] pt-16">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
                 {/* Header */}
-                <div className="mb-8">
+                <div className="mb-4 sm:mb-8">
                     <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.6 }}
                     >
-                        <div className="flex items-start justify-between">
+                        <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
                             <div>
-                                <h1 className="text-3xl font-light text-[var(--text)] mb-2">
+                                <h1 className="text-2xl sm:text-3xl font-light text-[var(--text)] mb-2">
                                     <span>API Testing Dashboard</span>
                                 </h1>
                                 <p className="text-[var(--muted-text)]">
@@ -175,10 +175,30 @@ export default function Dashboard() {
                     </motion.div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-8">
                     {/* Sidebar Navigation */}
                     <div className="lg:col-span-1">
-                        <div className="rounded-2xl border border-[var(--border)] bg-[rgb(var(--surface-rgb)/0.55)] backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.06)] p-2 sticky top-24">
+                        {/* Mobile: Horizontal scroll */}
+                        <div className="lg:hidden mb-4 overflow-x-auto -mx-4 px-4">
+                            <div className="flex space-x-2 min-w-max">
+                                {sections.map((section) => (
+                                    <button
+                                        key={section.id}
+                                        onClick={() => setActiveSection(section.id)}
+                                        className={`px-4 py-2 rounded-lg text-sm whitespace-nowrap border transition-colors ${
+                                            activeSection === section.id
+                                                ? 'border-[var(--accent)] bg-[var(--accent)] text-white'
+                                                : 'border-[var(--border)] bg-[rgb(var(--surface-rgb)/0.55)] text-[var(--muted-text)]'
+                                        }`}
+                                    >
+                                        {section.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        
+                        {/* Desktop: Vertical sidebar */}
+                        <div className="hidden lg:block rounded-2xl border border-[var(--border)] bg-[rgb(var(--surface-rgb)/0.55)] backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.06)] p-2 sticky top-24">
                             <nav className="space-y-1" role="navigation" aria-label="Dashboard sections" onKeyDown={onSidebarKeyDown}>
                                 {sections.map((section, index) => (
                                     <motion.button
@@ -209,8 +229,8 @@ export default function Dashboard() {
                                 ))}
                             </nav>
 
-                            {/* API Endpoints */}
-                            <div className="mt-6 pt-6 border-t border-[var(--border)]">
+                            {/* API Endpoints - Hidden on mobile */}
+                            <div className="mt-6 pt-6 border-t border-[var(--border)] mobile-hidden">
                                 <h4 className="text-xs font-medium text-[var(--muted-text)] uppercase tracking-wider mb-3">
                                     API Endpoints
                                 </h4>
@@ -255,6 +275,15 @@ export default function Dashboard() {
 
                     {/* Main Content */}
                     <div className="lg:col-span-3">
+                        {/* Mobile section title */}
+                        <div className="lg:hidden mb-4">
+                            <h2 className="text-xl font-semibold">
+                                {sections.find(s => s.id === activeSection)?.label}
+                            </h2>
+                            <p className="text-sm text-[var(--muted-text)]">
+                                {sections.find(s => s.id === activeSection)?.description}
+                            </p>
+                        </div>
                         <motion.div
                             key={activeSection}
                             initial={{ opacity: 0, y: 20 }}
