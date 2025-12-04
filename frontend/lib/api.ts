@@ -1,4 +1,5 @@
 import toast from 'react-hot-toast';
+import { getAuthHeaders, getAccessToken, getRefreshToken, clearAuthTokens, setAuthTokens } from './auth';
 
 interface ApiConfig {
     baseUrl: string;
@@ -123,9 +124,14 @@ export async function apiRequest<T = any>(
         ...options.headers,
     };
 
-    // Add API key for authenticated endpoints
-    if (includeAuth && config.apiKey) {
+    // Add authentication (JWT token preferred, fallback to API key)
+    if (includeAuth) {
+        const token = getAccessToken();
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        } else if (config.apiKey) {
         headers['x-api-key'] = config.apiKey;
+        }
     }
 
     const requestOptions: RequestInit = {
@@ -173,6 +179,29 @@ export async function apiRequest<T = any>(
                     break;
                 case 401:
                     errorMessage = 'Invalid API key or unauthorized';
+                    // Try to refresh token if we have a refresh token
+                    const refreshToken = getRefreshToken();
+                    if (refreshToken && endpoint !== '/v1/auth/refresh') {
+                        // Attempt token refresh
+                        try {
+                            const refreshResponse = await fetch(`${config.baseUrl}/v1/auth/refresh`, {
+                                method: 'POST',
+                                headers: { 'Authorization': `Bearer ${refreshToken}` },
+                            });
+                            if (refreshResponse.ok) {
+                                const refreshData = await refreshResponse.json();
+                                setAuthTokens(refreshData);
+                                // Retry original request
+                                return apiRequest(endpoint, options, includeAuth);
+                            }
+                        } catch {
+                            // Refresh failed, clear tokens
+                            clearAuthTokens();
+                            if (typeof window !== 'undefined') {
+                                window.location.href = '/login';
+                            }
+                        }
+                    }
                     break;
                 case 404:
                     errorMessage = 'Endpoint not found';
@@ -215,6 +244,28 @@ export async function apiRequest<T = any>(
 
 // Specific API methods
 export const memoryMeshAPI = {
+    // Authentication
+    login: (email: string, password: string, rememberMe = false) =>
+        apiRequest('/v1/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ email, password, remember_me: rememberMe })
+        }, false),
+
+    register: (data: {
+        email: string;
+        username: string;
+        password: string;
+        full_name?: string;
+        tenant_id?: string;
+    }) => apiRequest('/v1/auth/register', {
+        method: 'POST',
+        body: JSON.stringify(data)
+    }, false),
+
+    getCurrentUser: () => apiRequest('/v1/auth/me'),
+
+    logout: () => apiRequest('/v1/auth/logout', { method: 'POST' }),
+
     // Messages
     storeMessage: (data: {
         tenant_id: string;
@@ -230,6 +281,64 @@ export const memoryMeshAPI = {
 
     getMessage: (messageId: string) =>
         apiRequest(`/v1/messages/${messageId}`),
+
+    updateMessage: (messageId: string, data: {
+        content?: string;
+        metadata?: Record<string, any>;
+        importance_override?: number;
+        archived?: boolean;
+    }) => apiRequest(`/v1/messages/${messageId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data)
+    }),
+
+    deleteMessage: (messageId: string) =>
+        apiRequest(`/v1/messages/${messageId}`, { method: 'DELETE' }),
+
+    // Conversations
+    listConversations: (params: {
+        tenant_id?: string;
+        archived?: boolean;
+        page?: number;
+        page_size?: number;
+    }) => {
+        const searchParams = new URLSearchParams();
+        if (params.tenant_id) searchParams.append('tenant_id', params.tenant_id);
+        if (params.archived !== undefined) searchParams.append('archived', params.archived.toString());
+        if (params.page) searchParams.append('page', params.page.toString());
+        if (params.page_size) searchParams.append('page_size', params.page_size.toString());
+        return apiRequest(`/v1/conversations?${searchParams.toString()}`);
+    },
+
+    getConversation: (conversationId: string, tenantId: string) =>
+        apiRequest(`/v1/conversations/${conversationId}?tenant_id=${tenantId}`),
+
+    createConversation: (data: {
+        conversation_id: string;
+        tenant_id: string;
+        title?: string;
+        metadata?: Record<string, any>;
+    }) => apiRequest('/v1/conversations', {
+        method: 'POST',
+        body: JSON.stringify(data)
+    }),
+
+    updateConversation: (conversationId: string, data: {
+        title?: string;
+        metadata?: Record<string, any>;
+        archived?: boolean;
+    }, tenantId: string) => apiRequest(`/v1/conversations/${conversationId}?tenant_id=${tenantId}`, {
+        method: 'PUT',
+        body: JSON.stringify(data)
+    }),
+
+    deleteConversation: (conversationId: string, tenantId: string, deleteMessages = false) =>
+        apiRequest(`/v1/conversations/${conversationId}?tenant_id=${tenantId}&delete_messages=${deleteMessages}`, {
+            method: 'DELETE'
+        }),
+
+    getConversationStats: (conversationId: string, tenantId: string) =>
+        apiRequest(`/v1/conversations/${conversationId}/stats?tenant_id=${tenantId}`),
 
     // Memory search
     searchMemories: (params: {
@@ -256,6 +365,19 @@ export const memoryMeshAPI = {
         }
 
         return apiRequest(`/v1/memory/search?${searchParams.toString()}`);
+    },
+
+    // Analytics
+    getUsageStats: (tenantId?: string) => {
+        const params = tenantId ? `?tenant_id=${tenantId}` : '';
+        return apiRequest(`/v1/analytics/usage${params}`);
+    },
+
+    getMessageTrends: (params: { tenant_id?: string; days?: number }) => {
+        const searchParams = new URLSearchParams();
+        if (params.tenant_id) searchParams.append('tenant_id', params.tenant_id);
+        if (params.days) searchParams.append('days', params.days.toString());
+        return apiRequest(`/v1/analytics/trends?${searchParams.toString()}`);
     },
 
     // Admin endpoints
