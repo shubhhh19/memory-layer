@@ -18,23 +18,29 @@ export default function Home() {
 
         // Check URL for view parameter (routes mode)
         if (typeof window !== 'undefined') {
-            const params = new URLSearchParams(window.location.search);
-            const view = params.get('view');
-            if (view === 'dashboard' || view === 'landing') {
-                setActiveTab(view);
-            } else {
-                const savedState = getNavigationState();
-                setActiveTab(savedState || 'landing');
-            }
-
-            // Handle browser back/forward
-            const onPop = () => {
+            try {
                 const params = new URLSearchParams(window.location.search);
                 const view = params.get('view');
-                setActiveTab(view === 'dashboard' ? 'dashboard' : 'landing');
-            };
-            window.addEventListener('popstate', onPop);
-            return () => window.removeEventListener('popstate', onPop);
+                if (view === 'dashboard' || view === 'landing') {
+                    setActiveTab(view);
+                } else {
+                    const savedState = getNavigationState();
+                    setActiveTab(savedState || 'landing');
+                }
+
+                // Handle browser back/forward
+                const onPop = () => {
+                    const params = new URLSearchParams(window.location.search);
+                    const view = params.get('view');
+                    setActiveTab(view === 'dashboard' ? 'dashboard' : 'landing');
+                };
+                window.addEventListener('popstate', onPop);
+                return () => window.removeEventListener('popstate', onPop);
+            } catch (error) {
+                // Fallback to landing if anything fails
+                console.error('Error initializing page:', error);
+                setActiveTab('landing');
+            }
         }
     }, []);
 

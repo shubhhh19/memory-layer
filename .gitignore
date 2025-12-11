@@ -102,3 +102,5 @@ testsprite_tests/tmp/
 # Documentation - Production Guide (not for public repo)
 # =============================================================================
 README_PRODUCTION.md
+DEPLOY_VERCEL.md
+MOBILE_KEYBOARD_PLAN.md

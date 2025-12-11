@@ -439,6 +439,175 @@ export default function LandingPage({ onNavigateToDashboard }: LandingPageProps)
                 </div>
             </section>
 
+            {/* Coming Soon Section */}
+            <section className="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-[rgb(var(--surface-rgb)/0.3)] to-[rgb(var(--surface-rgb)/0.5)] backdrop-blur-xl" aria-labelledby="coming-soon-heading">
+                <div className="max-w-7xl mx-auto">
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        viewport={{ once: true }}
+                        transition={{ duration: 0.8 }}
+                        className="text-center mb-12"
+                    >
+                        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-[var(--border)] bg-[rgb(var(--surface-rgb)/0.5)] backdrop-blur-xl mb-6">
+                            <Icon icon="material-symbols:rocket-launch" className="w-4 h-4 text-[var(--accent)]" />
+                            <span className="text-sm text-[var(--muted-text)]">Roadmap</span>
+                        </div>
+                        <h2 id="coming-soon-heading" className="text-4xl md:text-5xl font-light text-[var(--text)] mb-4">
+                            <span>What&apos;s Coming Soon</span>
+                        </h2>
+                        <p className="text-xl text-[var(--muted-text)] max-w-2xl mx-auto">
+                            <span>We&apos;re constantly improving. Here&apos;s what we&apos;re building next.</span>
+                        </p>
+                    </motion.div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {([
+                            {
+                                icon: 'material-symbols:keyboard',
+                                title: 'Universal AI Memory Keyboard',
+                                description: 'AI-powered mobile keyboard that injects your memories into ChatGPT, Claude, Gemini, Perplexity, and more. Works across all AI apps without APIs—just type and your context is automatically included.',
+                                category: 'Mobile',
+                                featured: true
+                            },
+                            {
+                                icon: 'material-symbols:bolt',
+                                title: 'Performance Boost',
+                                description: 'Redis caching layer, read replicas, and optimized batch processing for 10x faster queries.',
+                                category: 'Performance'
+                            },
+                            {
+                                icon: 'material-symbols:filter-list',
+                                title: 'Advanced Search',
+                                description: 'Date ranges, metadata queries, and multi-vector search for more precise results.',
+                                category: 'Features'
+                            },
+                            {
+                                icon: 'material-symbols:share',
+                                title: 'Message Threading',
+                                description: 'Reply chains, conversation threads, and relationship mapping between messages.',
+                                category: 'Features'
+                            },
+                            {
+                                icon: 'material-symbols:webhook',
+                                title: 'Webhook Support',
+                                description: 'Real-time notifications for memory events, search triggers, and retention actions.',
+                                category: 'Integration'
+                            },
+                            {
+                                icon: 'material-symbols:code',
+                                title: 'GraphQL API',
+                                description: 'GraphQL endpoint alongside REST for flexible querying and reduced over-fetching.',
+                                category: 'Developer Experience'
+                            },
+                            {
+                                icon: 'material-symbols:download',
+                                title: 'Export & Analytics',
+                                description: 'Export conversations, advanced analytics dashboards, and custom date range queries.',
+                                category: 'Analytics'
+                            },
+                            {
+                                icon: 'material-symbols:memory',
+                                title: 'Memory Types',
+                                description: 'Support for episodic, procedural, and semantic memory types beyond conversational.',
+                                category: 'Features'
+                            },
+                            {
+                                icon: 'material-symbols:auto-awesome',
+                                title: 'RAG Features',
+                                description: 'Memory summarization, context compression, and cross-memory linking for smarter retrieval.',
+                                category: 'AI Features'
+                            },
+                            {
+                                icon: 'material-symbols:cloud-upload',
+                                title: 'Kubernetes & Terraform',
+                                description: 'Helm charts and Terraform modules for easier cloud deployment and infrastructure as code.',
+                                category: 'Infrastructure'
+                            }
+                        ] as Array<{
+                            icon: string;
+                            title: string;
+                            description: string;
+                            category: string;
+                            featured?: boolean;
+                        }>).map((item, index) => (
+                            <motion.div
+                                key={item.title}
+                                initial={{ opacity: 0, y: 20 }}
+                                whileInView={{ opacity: 1, y: 0 }}
+                                viewport={{ once: true }}
+                                transition={{ duration: 0.5, delay: index * 0.1 }}
+                                className={`group relative rounded-2xl p-6 border backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.06)] hover:shadow-[0_12px_48px_rgba(0,0,0,0.12)] transition-all duration-300 ${
+                                    item.featured 
+                                        ? 'border-2 border-[var(--accent)] bg-gradient-to-br from-[rgb(var(--accent-rgb)/0.1)] to-[rgb(var(--surface-rgb)/0.55)]' 
+                                        : 'border border-[var(--border)] bg-[rgb(var(--surface-rgb)/0.55)] hover:border-[var(--accent)]'
+                                }`}
+                            >
+                                {item.featured && (
+                                    <div className="absolute -top-3 left-4 px-3 py-1 rounded-full bg-gradient-to-r from-[var(--accent)] to-blue-500 text-white text-xs font-medium shadow-lg">
+                                        ⭐ Featured
+                                    </div>
+                                )}
+                                <div className="flex items-start mb-4">
+                                    <div className={`p-3 rounded-xl mr-4 group-hover:scale-110 transition-transform duration-300 ${
+                                        item.featured
+                                            ? 'bg-gradient-to-br from-purple-500 via-[var(--accent)] to-blue-500'
+                                            : 'bg-gradient-to-br from-[var(--accent)] to-blue-500'
+                                    }`}>
+                                        <Icon icon={item.icon} className="w-6 h-6 text-white" />
+                                    </div>
+                                    <div className="flex-1">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h3 className="text-lg font-medium text-[var(--text)]">
+                                                {item.title}
+                                            </h3>
+                                            <span className="text-xs px-2 py-1 rounded-full bg-[rgb(var(--accent-rgb)/0.1)] border border-[rgb(var(--accent-rgb)/0.2)] text-[var(--accent)]">
+                                                {item.category}
+                                            </span>
+                                        </div>
+                                        <p className="text-sm text-[var(--muted-text)] leading-relaxed">
+                                            {item.description}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="absolute bottom-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <Icon icon="material-symbols:arrow-forward" className="w-5 h-5 text-[var(--accent)]" />
+                                </div>
+                            </motion.div>
+                        ))}
+                    </div>
+
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        viewport={{ once: true }}
+                        transition={{ duration: 0.8, delay: 0.9 }}
+                        className="mt-12 text-center"
+                    >
+                        <div className="inline-flex items-center gap-3 px-6 py-4 rounded-xl border border-[var(--border)] bg-[rgb(var(--surface-rgb)/0.6)] backdrop-blur-xl">
+                            <Icon icon="material-symbols:lightbulb" className="w-5 h-5 text-[var(--accent)]" />
+                            <div className="text-left">
+                                <p className="text-sm font-medium text-[var(--text)]">
+                                    <span>Have a feature request?</span>
+                                </p>
+                                <p className="text-xs text-[var(--muted-text)]">
+                                    <span>Open an issue on </span>
+                                    <a
+                                        href="https://github.com/shubhhh19/memory-layer"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-[var(--accent)] hover:underline"
+                                    >
+                                        GitHub
+                                    </a>
+                                    <span> or contribute to the roadmap</span>
+                                </p>
+                            </div>
+                        </div>
+                    </motion.div>
+                </div>
+            </section>
+
             {/* Footer */}
             <footer className="py-12 px-4 sm:px-6 lg:px-8 bg-[rgb(var(--surface-rgb)/0.6)] backdrop-blur-xl border-t border-[var(--border)]">
                 <div className="max-w-7xl mx-auto">

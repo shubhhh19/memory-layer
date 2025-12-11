@@ -56,13 +56,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         // Load user from storage first
-        const storedUser = getUser();
-        if (storedUser) {
-            setUser(storedUser);
+        try {
+            const storedUser = getUser();
+            if (storedUser) {
+                setUser(storedUser);
+            }
+        } catch {
+            // Ignore storage errors
         }
 
-        // Then refresh from API
-        refreshUser();
+        // Then refresh from API (but don't block if API is unavailable)
+        refreshUser().catch(() => {
+            // If API call fails, just set loading to false
+            setLoading(false);
+        });
     }, []);
 
     return (
