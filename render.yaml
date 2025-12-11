@@ -15,7 +15,7 @@ services:
       - key: MEMORY_REDIS_URL
         sync: false
       - key: MEMORY_ASYNC_EMBEDDINGS
-        value: "true"
+        value: "false"
       - key: JWT_SECRET_KEY
         generateValue: true
       - key: GOOGLE_CLIENT_ID
