@@ -354,6 +354,30 @@ MEMORY_ALLOWED_ORIGINS=http://localhost:3000,https://yourdomain.com
 
 See the [`.env.example`](.env.example) file for all available configuration options.
 
+## Performance Optimization
+
+### Database Performance
+- **Use PostgreSQL with pgvector** for production deployments
+- **Enable connection pooling** with appropriate pool sizes
+- **Use read replicas** for scaling read-heavy workloads
+- **Index frequently queried fields** (tenant_id, conversation_id)
+
+### Embedding Generation
+- **Enable async embeddings** (`MEMORY_ASYNC_EMBEDDINGS=true`) for better throughput
+- **Batch embedding requests** when possible
+- **Use appropriate embedding dimensions** (smaller = faster, but less accurate)
+- **Consider caching** embeddings for frequently accessed messages
+
+### Caching
+- **Enable Redis caching** for production environments
+- **Tune cache TTL values** based on your access patterns
+- **Use cache for search results** to reduce database load
+
+### Rate Limiting
+- **Configure appropriate limits** based on your infrastructure
+- **Use Redis for distributed rate limiting** across multiple instances
+- **Monitor rate limit hits** to adjust limits as needed
+
 ## Architecture
 
 The service follows a layered architecture:
